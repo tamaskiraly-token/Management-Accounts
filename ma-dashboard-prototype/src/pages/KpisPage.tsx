@@ -80,9 +80,13 @@ export function KpisPage(props: {
   const currency = entityModel.currency
   const { current, window } = useSeries(props.model, props.filters)
   const [volumeMode, setVolumeMode] = useState<'total' | 'incremental'>('total')
+  const [unitMetric, setUnitMetric] = useState<
+    'takeRateBps' | 'revPerTxn' | 'cogsPerTxn' | 'opResultPerTxn' | 'avgRevPerClient'
+  >('takeRateBps')
   const valueLabel = useMemo(() => makeValueLabel({ kind: 'number', tone: 'muted' }), [])
   const barValueLabel = useMemo(() => makeBarValueLabel({ kind: 'number', tone: 'muted' }), [])
   const moneyBarLabel = useMemo(() => makeBarValueLabel({ kind: 'money', tone: 'muted', currency }), [currency])
+  const moneyPointLabel = useMemo(() => makeValueLabel({ kind: 'money', tone: 'muted', currency }), [currency])
 
   const productBase: Record<Product, number> = { PIS: 0.42, AIS: 0.18, VRP: 0.26, VAs: 0.14 }
   const seriesByProduct = useMemo(() => {
@@ -176,6 +180,39 @@ export function KpisPage(props: {
       avgRevPerClient,
     }
   }, [current])
+
+  const unitEconomicsTrend = useMemo(() => {
+    const labelByKey: Record<typeof unitMetric, string> = {
+      takeRateBps: 'Take rate (bps)',
+      revPerTxn: 'Revenue / txn',
+      cogsPerTxn: 'COS / txn',
+      opResultPerTxn: 'Op result / txn',
+      avgRevPerClient: 'Avg revenue / active client',
+    }
+
+    return {
+      yKey: labelByKey[unitMetric],
+      isMoney: unitMetric !== 'takeRateBps',
+      data: window.map((m) => {
+        const revPerTxn = safeDiv(m.revenue, m.txnCount)
+        const cogsPerTxn = safeDiv(m.cogs, m.txnCount)
+        const opResultPerTxn = safeDiv(m.revenue - m.cogs - m.opex, m.txnCount)
+        const avgRevPerClient = safeDiv(m.revenue, m.activeClients)
+        const y =
+          unitMetric === 'takeRateBps'
+            ? m.takeRateBps
+            : unitMetric === 'revPerTxn'
+              ? revPerTxn
+              : unitMetric === 'cogsPerTxn'
+                ? cogsPerTxn
+                : unitMetric === 'opResultPerTxn'
+                  ? opResultPerTxn
+                  : avgRevPerClient
+
+        return { period: m.periodLabel.slice(0, 3), y }
+      }),
+    }
+  }, [unitMetric, window])
 
   const commentary = useMemo(() => {
     const volumeVsPlan = safeDiv(current.txnCount - current.txnCountPlan, Math.max(1, current.txnCountPlan))
@@ -731,6 +768,59 @@ export function KpisPage(props: {
               </div>
             </div>
           </Card>
+        </div>
+
+        <div className="col-span-12">
+          <ChartCard
+            title="Unit economics over time"
+            subtitle="Select a metric to track efficiency and pricing dynamics"
+            right={
+              <Select
+                label="Metric"
+                value={unitMetric}
+                options={[
+                  { value: 'takeRateBps', label: 'Take rate (bps)' },
+                  { value: 'revPerTxn', label: 'Revenue / txn' },
+                  { value: 'cogsPerTxn', label: 'COS / txn' },
+                  { value: 'opResultPerTxn', label: 'Op result / txn' },
+                  { value: 'avgRevPerClient', label: 'Avg revenue / active client' },
+                ]}
+                onChange={(v) => setUnitMetric(v as any)}
+              />
+            }
+            height={260}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={unitEconomicsTrend.data} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
+                <CartesianGrid stroke={COLORS.grid} vertical={false} />
+                <XAxis dataKey="period" tickLine={false} axisLine={false} />
+                <YAxis
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(v) => {
+                    if (!unitEconomicsTrend.isMoney) return `${Number(v).toFixed(0)} bps`
+                    return formatMoney(Number(v), { compact: true, currency, maximumFractionDigits: 4 })
+                  }}
+                />
+                <Tooltip
+                  formatter={(v: any) => {
+                    const n = typeof v === 'number' ? v : Number(v)
+                    if (!unitEconomicsTrend.isMoney) return [`${n.toFixed(1)} bps`, unitEconomicsTrend.yKey]
+                    return [formatMoney(n, { currency, maximumFractionDigits: 4 }), unitEconomicsTrend.yKey]
+                  }}
+                  contentStyle={{
+                    background: 'rgba(255,255,255,0.95)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 12,
+                    boxShadow: 'var(--shadow-md)',
+                  }}
+                />
+                <Line type="monotone" dataKey="y" name={unitEconomicsTrend.yKey} stroke={COLORS.violet} strokeWidth={2.4} dot={false}>
+                  <LabelList content={unitEconomicsTrend.isMoney ? moneyPointLabel : valueLabel} />
+                </Line>
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartCard>
         </div>
       </div>
     </div>
